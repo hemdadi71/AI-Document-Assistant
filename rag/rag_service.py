@@ -5,6 +5,7 @@ from llm import get_ai_response
 from llm import stream_ai_response
 import os
 
+THRESHOLD = 0.5
 
 class RAGService:
 
@@ -13,32 +14,38 @@ class RAGService:
 
     def ask(self, question: str) -> str:
 
-        query_vector = create_embedding(question)
+            query_vector = create_embedding(question)
 
-        contexts = self.vector_store.search(query_vector, k=3)
+            contexts = self.vector_store.search(query_vector, k=3)
 
-        prompt = build_rag_prompt(question, contexts)
+            if not contexts or contexts[0]["score"] < THRESHOLD:
+                return {
+            "answer": "I don't know.",
+            "sources": []
+            }
 
-        answer = get_ai_response([{"role": "user", "content": prompt}])
+            prompt = build_rag_prompt(question, contexts)
 
-        return {
-            "answer": answer,
-            "sources": [
-                {
-                    "source": os.path.basename(context["document"]["source"]),
-                    "chunk_id": context["document"]["chunk_id"],
-                    "score": context["score"],
-                }
-                for context in contexts
-            ],
+            answer = get_ai_response([{"role": "user", "content": prompt}])
+
+            return {
+        "answer": answer,
+        "sources": [
+        {
+        "source": os.path.basename(context["document"]["source"]),
+        "chunk_id": context["document"]["chunk_id"],
+        "score": context["score"],
+        }
+        for context in contexts
+        ],
         }
 
     def stream_answer(self, question: str):
 
-        query_vector = create_embedding(question)
+            query_vector = create_embedding(question)
 
-        contexts = self.vector_store.search(query_vector, k=3)
+            contexts = self.vector_store.search(query_vector, k=3)
 
-        prompt = build_rag_prompt(question, contexts)
+            prompt = build_rag_prompt(question, contexts)
 
-        return stream_ai_response([{"role": "user", "content": prompt}])
+            return stream_ai_response([{"role": "user", "content": prompt}])

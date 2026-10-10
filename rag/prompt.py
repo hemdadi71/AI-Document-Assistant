@@ -7,6 +7,10 @@ Score: {item['score']}
 {item['document']['text']}
 """ for item in contexts])
 
+    for item in contexts:
+        print(item)
+
+
     prompt = f"""
 You are an AI assistant. Answer the question using only the provided context.
 
