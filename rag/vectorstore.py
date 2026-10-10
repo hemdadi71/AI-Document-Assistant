@@ -33,11 +33,11 @@ class VectorStore:
 
         results = []
 
-        for index in indices[0]:
+        for score, index in zip(distances[0], indices[0]):
 
-            results.append(self.documents[index])
+            results.append({"document": self.documents[index], "score": float(score)})
 
-        return results
+            return results
 
     def save(self, path: str):
 

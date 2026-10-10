@@ -5,6 +5,7 @@ from llm import get_ai_response
 from llm import stream_ai_response
 import os
 
+
 class RAGService:
 
     def __init__(self, vector_store: VectorStore):
@@ -14,7 +15,7 @@ class RAGService:
 
         query_vector = create_embedding(question)
 
-        contexts = self.vector_store.search(query_vector, k=1)
+        contexts = self.vector_store.search(query_vector, k=3)
 
         prompt = build_rag_prompt(question, contexts)
 
@@ -23,7 +24,11 @@ class RAGService:
         return {
             "answer": answer,
             "sources": [
-                {"source": os.path.basename(context["source"]), "chunk_id": context["chunk_id"]}
+                {
+                    "source": os.path.basename(context["document"]["source"]),
+                    "chunk_id": context["document"]["chunk_id"],
+                    "score": context["score"],
+                }
                 for context in contexts
             ],
         }
@@ -32,7 +37,7 @@ class RAGService:
 
         query_vector = create_embedding(question)
 
-        contexts = self.vector_store.search(query_vector, k=1)
+        contexts = self.vector_store.search(query_vector, k=3)
 
         prompt = build_rag_prompt(question, contexts)
 
