@@ -9,13 +9,15 @@ class VectorStore:
 
         self.dimension = dimension
 
-        self.index = faiss.IndexFlatL2(dimension)
+        self.index = faiss.IndexFlatIP(dimension)
 
         self.documents = []
 
     def add(self, vectors, documents):
 
         vectors = np.array(vectors).astype("float32")
+
+        faiss.normalize_L2(vectors)
 
         self.index.add(vectors)
 
@@ -24,6 +26,8 @@ class VectorStore:
     def search(self, query_vector, k=3):
 
         query_vector = np.array([query_vector]).astype("float32")
+
+        faiss.normalize_L2(query_vector)
 
         distances, indices = self.index.search(query_vector, k)
 

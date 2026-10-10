@@ -52,6 +52,9 @@ def upload_pdf(file: UploadFile = File(...)):
 @app.post("/chat")
 def chat(request: ChatRequest):
 
+    if rag_service is None:
+        return {"error": "No documents uploaded yet"}
+
     result = rag_service.ask(request.question)
 
     return result
