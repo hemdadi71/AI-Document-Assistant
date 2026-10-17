@@ -5,7 +5,7 @@ from llm import get_ai_response
 from llm import stream_ai_response
 import os
 
-THRESHOLD = 0.5
+THRESHOLD = 0.1
 
 class RAGService:
 

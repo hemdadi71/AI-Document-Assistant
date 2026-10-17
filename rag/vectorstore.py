@@ -1,6 +1,9 @@
 import faiss
 import numpy as np
 import pickle
+import os
+
+
 
 
 class VectorStore:
@@ -41,11 +44,12 @@ class VectorStore:
 
     def save(self, path: str):
 
+        os.makedirs(path, exist_ok=True)
+
         faiss.write_index(self.index, f"{path}/index.faiss")
 
         with open(f"{path}/documents.pkl", "wb") as f:
-
-            pickle.dump(self.documents, f)
+         pickle.dump(self.documents, f)
 
     def add_documents(self, vectors, documents):
 
