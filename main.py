@@ -37,7 +37,7 @@ def reload_rag():
 @app.post("/upload")
 def upload_pdf(file: UploadFile = File(...)):
 
-    file_path = f"data/{file.filename}"
+    file_path = f"data/pdf/{file.filename}"
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
