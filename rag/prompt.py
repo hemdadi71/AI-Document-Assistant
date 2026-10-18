@@ -1,22 +1,28 @@
 def build_rag_prompt(question, contexts):
 
-    context_text = "\n\n".join([context["text"] for context in contexts])
+    context_text = "\n\n".join([f"""
+Source: {item['document']['source']}
+Score: {item['score']}
+
+{item['document']['text']}
+""" for item in contexts])
+
+    for item in contexts:
+        print(item)
+
 
     prompt = f"""
-You are an AI assistant.
-
-Answer the question only based on the provided context.
+You are an AI assistant. Answer the question using only the provided context.
 
 Context:
 
 {context_text}
 
-
 Question:
-
 {question}
 
-Answer:
+If the answer is not available in the context, say:
+"I don't know."
 """
 
     return prompt
