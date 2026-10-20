@@ -9,7 +9,7 @@ from llm import stream_ai_response
 import os
 
 THRESHOLD = 0.1
-RETRIEVAL_K = 10
+RETRIEVAL_K = 30
 FINAL_CONTEXTS_K = 3
 
 

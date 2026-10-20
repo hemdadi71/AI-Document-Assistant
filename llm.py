@@ -96,6 +96,7 @@ def get_ai_response(messages: list[dict[str, str]]) -> str:
         response = get_client().chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
+            temperature=0,
         )
 
         if not response.choices:
@@ -128,6 +129,7 @@ def stream_ai_response(messages: list[dict[str, str]]):
             model=MODEL_NAME,
             messages=messages,
             stream=True,
+            temperature=0
         )
 
         for chunk in stream:
