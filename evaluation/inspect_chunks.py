@@ -1,20 +1,61 @@
 
-import pickle
+from pathlib import Path
 
-TARGET_CHUNKS = {
-    7, 8,                  # Draw a sheep
-    81, 85, 84,             # Man on the second planet
-    72, 77, 80,             # The king
-    154, 73, 83,            # Fifty-three minutes
-}
+from rag.vectorstore import VectorStore
 
-with open("storage/documents.pkl", "rb") as file:
-    documents = pickle.load(file)
 
-for document in documents:
-    chunk_id = document.get("chunk_id")
+SOURCE = "The-Little-Prince-for-Level-2-PDF.pdf"
 
-    if chunk_id in TARGET_CHUNKS:
-        print(f"\n{'=' * 60}")
-        print(f"CHUNK ID: {chunk_id}")
-        print(document.get("text", ""))
+SEARCH_TERMS = [
+    "draw me a sheep",
+    "please, draw me a sheep",
+    "glass over the flower",
+    "sheep can come to the flower",
+    "ate or didn't eat a rose",
+]
+
+
+def main():
+    store = VectorStore.load("storage")
+
+    book_chunks = [
+        doc
+        for doc in store.documents
+        if Path(doc.get("source", "")).name == SOURCE
+    ]
+
+    print(f"Total chunks in index: {len(store.documents)}")
+    print(f"Book chunks: {len(book_chunks)}")
+
+    for term in SEARCH_TERMS:
+        print("\n" + "=" * 70)
+        print(f"SEARCH TERM: {term}")
+
+        matches = []
+
+        for doc in book_chunks:
+            text = doc.get("text", "")
+            position = text.lower().find(term.lower())
+
+            if position != -1:
+                matches.append((doc, position))
+
+        if not matches:
+            print("NOT FOUND as an exact phrase.")
+            continue
+
+        for doc, position in matches:
+            text = doc["text"]
+
+            start = max(0, position - 180)
+            end = min(len(text), position + len(term) + 220)
+
+            print(
+                f"\nChunk ID: {doc['chunk_id']}"
+                f"\nText length: {len(text)}"
+                f"\nEvidence: {text[start:end]}"
+            )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,51 +1,124 @@
-
 [
   {
     "question": "What did the narrator see in a book when he was six years old?",
     "expected_answer": "A picture of a snake eating a big animal.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [0]
+    "expected_chunk_ids": [
+      0
+    ],
+    "expected_evidence": [
+      [
+        "snake who was eating a big animal"
+      ]
+    ]
   },
   {
     "question": "How many sunsets did the little prince watch in one day?",
     "expected_answer": "Forty-three sunsets.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [42]
+    "expected_chunk_ids": [
+      20
+    ],
+    "expected_evidence": [
+      [
+        "forty-three times"
+      ]
+    ]
   },
   {
     "question": "What did the little prince ask the narrator to draw?",
     "expected_answer": "He asked the narrator to draw a sheep.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [7, 8]
+    "expected_chunk_ids": [
+      3
+    ],
+    "expected_evidence": [
+      [
+        "please draw me a sheep",
+        "draw me a sheep"
+      ]
+    ]
   },
   {
     "question": "What did the little prince's flower ask him to bring?",
     "expected_answer": "She asked him to bring her some water.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [55]
+    "expected_chunk_ids": [
+      26
+    ],
+    "expected_evidence": [
+      [
+        "could you bring me some water",
+        "bring me some water"
+      ]
+    ]
   },
   {
     "question": "Why did the man on the second planet want people to admire him?",
     "expected_answer": "He wanted people to believe that he was the most handsome, best dressed, richest, and most intelligent man on the planet.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [84]
+    "expected_chunk_ids": [
+      40
+    ],
+    "expected_evidence": [
+      [
+        "most handsome"
+      ],
+      [
+        "best dressed"
+      ],
+      [
+        "richest"
+      ],
+      [
+        "most intelligent"
+      ]
+    ]
   },
   {
     "question": "What did the king say he ruled over?",
     "expected_answer": "He claimed to rule over everything, including all the stars and the universe.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [72]
+    "expected_chunk_ids": [
+      34
+    ],
+    "expected_evidence": [
+      [
+        "i control everything"
+      ],
+      [
+        "king of all the universe"
+      ]
+    ]
   },
   {
     "question": "What would the little prince do with fifty-three extra minutes?",
     "expected_answer": "He would walk very slowly to a fountain.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [154]
+    "expected_chunk_ids": [
+      74
+    ],
+    "expected_evidence": [
+      [
+        "walk very slowly to a fountain"
+      ]
+    ]
   },
   {
     "question": "Why was the narrator worried about the little prince's flower at the end of the story?",
     "expected_answer": "He worried that the sheep might have eaten the flower if the little prince had forgotten to cover it with glass.",
     "expected_source": "The-Little-Prince-for-Level-2-PDF.pdf",
-    "expected_chunk_ids": [192, 193]
+    "expected_chunk_ids": [
+      93
+    ],
+    "expected_evidence": [
+      [
+        "sheep jumped over the fence and ate the flower",
+        "sheep can come to the flower"
+      ],
+      [
+        "forget to put the glass over the flower"
+      ]
+    ]
   }
 ]
