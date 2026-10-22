@@ -1,0 +1,18 @@
+
+{
+  "default_project": "general_assistant",
+  "projects": [
+    {
+      "name": "general_assistant",
+      "chat_enabled":false,
+      "rag_enabled": true,
+      "system_prompt": "You are a helpful assistant. Answer questions naturally and use the provided documents when appropriate."
+    },
+    {
+      "name": "chat_only_demo",
+      "chat_enabled": true,
+      "rag_enabled": false,
+      "system_prompt": "You are a helpful general-purpose assistant."
+    }
+  ]
+}
