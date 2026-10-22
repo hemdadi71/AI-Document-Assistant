@@ -27,8 +27,12 @@ class FakeReranker:
 
 @pytest.fixture
 def service(monkeypatch):
+    monkeypatch.setattr(
+        rag_module,
+        "Reranker",
+        FakeReranker,
+    )
 
-    monkeypatch.setattr(rag_module, "Reranker", FakeReranker)
     monkeypatch.setattr(
         rag_module,
         "create_embedding",
@@ -36,7 +40,16 @@ def service(monkeypatch):
     )
 
     vector_store = Mock()
-    vector_store.search.return_value = []
+    vector_store.documents = []
+
+    hybrid_retriever = Mock()
+    hybrid_retriever.search.return_value = []
+
+    monkeypatch.setattr(
+        rag_module,
+        "HybridRetriever",
+        lambda vector_store: hybrid_retriever,
+    )
 
     return RAGService(vector_store)
 
@@ -54,6 +67,9 @@ def make_context(
             "chunk_id": chunk_id,
         },
         "score": score,
+        "dense_score": score,
+        "bm25_score": None,
+        "hybrid_score": score,
     }
 
 
@@ -69,7 +85,7 @@ def test_retrieve_skips_low_score_candidates(service, monkeypatch):
 
     monkeypatch.setattr(rag_module, "THRESHOLD", 0.1)
 
-    service.vector_store.search.return_value = [
+    service.hybrid_retriever.search.return_value = [
         make_context(score=0.05)
     ]
 
@@ -81,7 +97,7 @@ def test_retrieve_skips_low_score_candidates(service, monkeypatch):
 
 def test_retrieve_reranks_candidates(service):
 
-    service.vector_store.search.return_value = [
+    service.hybrid_retriever.search.return_value = [
         make_context(score=0.8),
         make_context(
             text="Another document",
@@ -120,7 +136,7 @@ def test_ask_returns_dont_know_without_contexts(
 
 def test_ask_returns_answer_and_sources(service, monkeypatch):
 
-    service.vector_store.search.return_value = [
+    service.hybrid_retriever.search.return_value = [
         make_context(
             source="/documents/2.pdf",
             chunk_id=4,
@@ -144,13 +160,16 @@ def test_ask_returns_answer_and_sources(service, monkeypatch):
 
     assert result["answer"] == "The answer is Fezzeh."
     assert result["sources"] == [
-        {
-            "source": "2.pdf",
-            "chunk_id": 4,
-            "score": 0.8,
-            "rerank_score": 10.0,
-        }
-    ]
+    {
+        "source": "2.pdf",
+        "chunk_id": 4,
+        "score": 0.8,
+        "dense_score": 0.8,
+        "bm25_score": None,
+        "hybrid_score": 0.8,
+        "rerank_score": 10.0,
+    }
+]
 
 
 def test_stream_returns_dont_know_without_contexts(service):
@@ -162,7 +181,7 @@ def test_stream_returns_dont_know_without_contexts(service):
 
 def test_stream_returns_llm_chunks(service, monkeypatch):
 
-    service.vector_store.search.return_value = [
+    service.hybrid_retriever.search.return_value = [
         make_context()
     ]
 

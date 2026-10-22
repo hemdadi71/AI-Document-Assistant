@@ -67,6 +67,9 @@ class RAGService:
 
         return contexts
 
+    def retrieve_contexts(self, question: str):
+        return self._retrieve_contexts(question)
+
     def ask(self, question: str):
 
         contexts = self._retrieve_contexts(question)
