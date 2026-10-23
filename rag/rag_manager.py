@@ -1,3 +1,4 @@
+
 import os
 
 from rag.loader import load_pdf
@@ -6,24 +7,36 @@ from rag.embeddings import create_embedding
 from rag.vectorstore import VectorStore
 
 
-def create_vector_store(pdf_path: str):
+def create_vector_store(
+    pdf_path: str,
+    storage_path: str = "storage",
+) -> int:
+    os.makedirs(storage_path, exist_ok=True)
 
     text = load_pdf(pdf_path)
-
     chunks = split_text(text, source=pdf_path)
 
-    vectors = [create_embedding(chunk["text"]) for chunk in chunks]
+    if not chunks:
+        raise ValueError("No text chunks were extracted from PDF.")
 
-    if os.path.exists("storage/index.faiss"):
+    vectors = [
+        create_embedding(chunk["text"])
+        for chunk in chunks
+    ]
 
-        store = VectorStore.load("storage")
+    index_path = os.path.join(
+        storage_path,
+        "index.faiss",
+    )
 
+    if os.path.exists(index_path):
+        store = VectorStore.load(storage_path)
     else:
-
-        store = VectorStore(dimension=len(vectors[0]))
+        store = VectorStore(
+            dimension=len(vectors[0]),
+        )
 
     store.add(vectors, chunks)
-
-    store.save("storage")
+    store.save(storage_path)
 
     return len(chunks)
