@@ -22,6 +22,13 @@ from core.project_loader import load_project_settings
 
 from llm import LLMServiceError
 
+from fastapi import Depends, Header
+
+from core.security import (
+    APIKeyConfigurationError,
+    resolve_project_for_api_key,
+)
+
 
 # ==================================================
 # APPLICATION SETUP
@@ -194,6 +201,64 @@ project_runtimes: dict[str, ProjectRuntime] = {
     )
     for config in PROJECT_CONFIGS
 }
+
+
+def authenticate_project(
+    x_api_key: str | None = Header(
+        default=None,
+        alias="X-API-Key",
+    ),
+) -> str:
+    """Authenticate the request and return its project ID."""
+
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid API key.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    try:
+        project_id = resolve_project_for_api_key(
+            x_api_key,
+            project_runtimes.keys(),
+        )
+    except APIKeyConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Project API key configuration is invalid.",
+        ) from exc
+
+    if project_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid API key.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    return project_id
+
+
+def get_authorized_runtime(
+    authenticated_project_id: str,
+    requested_project_id: str | None = None,
+) -> ProjectRuntime:
+    """Prevent a client from accessing another project."""
+
+    if (
+        requested_project_id
+        and requested_project_id.strip()
+        != authenticated_project_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Access to this project is forbidden.",
+        )
+
+    return get_runtime(
+    project_id=authenticated_project_id
+    )
+
 
 
 def get_runtime(
@@ -391,17 +456,21 @@ def safe_stream(generator):
         )
 
 
+
 # ==================================================
 # HEALTH ENDPOINT
 # ==================================================
 
 @app.get("/health")
 def health(
-    project_id: str | None = Query(
-        default=None,
-    ),
+    project_id: str | None = Query(default=None),
+    authenticated_project_id: str = Depends(authenticate_project),
 ):
-    runtime = get_runtime(project_id)
+    runtime = get_authorized_runtime(
+        authenticated_project_id,
+        project_id,
+    )
+
     config = runtime.config
 
     return {
@@ -421,6 +490,7 @@ def health(
     }
 
 
+
 # ==================================================
 # PDF UPLOAD ENDPOINT
 # ==================================================
@@ -431,8 +501,9 @@ def upload_pdf(
     project_id: str | None = Query(
         default=None,
     ),
+    authenticated_project_id: str = Depends(authenticate_project)
 ):
-    runtime = get_runtime(project_id)
+    runtime = get_authorized_runtime(authenticated_project_id, project_id)
 
     if not runtime.config.rag_enabled:
         raise HTTPException(
@@ -528,11 +599,11 @@ def upload_pdf(
 # ==================================================
 
 @app.post("/chat")
-def chat(request: ChatRequest):
-    runtime = get_runtime(
-        request.project_id,
+def chat(request: ChatRequest,authenticated_project_id: str = Depends(authenticate_project)):
+    runtime = get_authorized_runtime(
+    authenticated_project_id,
+    request.project_id,
     )
-
     config = runtime.config
     mode = request.mode
 
@@ -592,9 +663,11 @@ def chat(request: ChatRequest):
 @app.post("/chat-stream")
 def chat_stream(
     request: ChatRequest,
-):
-    runtime = get_runtime(
-        request.project_id,
+    authenticated_project_id: str = Depends(authenticate_project)
+):  
+    runtime = get_authorized_runtime(
+    authenticated_project_id,
+    request.project_id,
     )
 
     if request.mode != "rag":
