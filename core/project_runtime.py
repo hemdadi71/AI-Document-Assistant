@@ -85,6 +85,145 @@ class ProjectRuntime:
 
         return chunks_count
 
+    
+    def list_documents(self) -> list[dict]:
+        """List indexed PDF documents for this project."""
+
+        if not self.config.rag_enabled:
+            raise ValueError(
+                "RAG is disabled for this project."
+            )
+
+        if self.vector_store is None:
+            return []
+
+        sources = self.vector_store.list_sources()
+        documents = {}
+
+        for source, chunks_count in sources.items():
+            normalized_source = os.path.normcase(
+                os.path.abspath(source)
+            )
+
+            documents[normalized_source] = {
+                "filename": os.path.basename(source),
+                "chunks": chunks_count,
+                "status": "ready",
+            }
+
+        return sorted(
+            documents.values(),
+            key=lambda document: document["filename"].lower(),
+        )
+
+    
+    def delete_document(self, filename: str) -> int:
+        """Delete a document's indexed chunks from this project."""
+
+        if not self.config.rag_enabled:
+            raise ValueError(
+                "RAG is disabled for this project."
+            )
+
+        if (
+            not filename
+            or filename != os.path.basename(filename)
+            or filename in {".", ".."}
+            or not filename.lower().endswith(".pdf")
+        ):
+            raise ValueError("Invalid PDF filename.")
+
+        if self.vector_store is None:
+            raise FileNotFoundError(
+                f"Document not found: {filename}"
+            )
+
+        sources = self.vector_store.list_sources()
+
+        matching_sources = [
+            source
+            for source in sources
+            if os.path.basename(
+                os.path.normpath(source)
+            ) == filename
+        ]
+
+        if not matching_sources:
+            raise FileNotFoundError(
+                f"Indexed document not found: {filename}"
+            )
+
+        if len(matching_sources) > 1:
+            raise ValueError(
+                "Multiple indexed sources have this filename. "
+                "Delete by a unique document ID instead."
+            )
+
+        source_path = matching_sources[0]
+        source_abs = os.path.abspath(source_path)
+        project_pdf_dir = os.path.abspath(self.pdf_path)
+
+        try:
+            is_project_owned = (
+                os.path.commonpath(
+                    [source_abs, project_pdf_dir]
+                )
+                == project_pdf_dir
+            )
+        except ValueError:
+            is_project_owned = False
+
+        # Only delete the physical PDF if it belongs to this project.
+        pdf_path = (
+            source_abs
+            if is_project_owned and os.path.isfile(source_abs)
+            else None
+        )
+
+        backup_path = None
+
+        if pdf_path:
+            backup_path = (
+                f"{pdf_path}.delete-backup-{uuid.uuid4().hex}"
+            )
+            os.replace(pdf_path, backup_path)
+
+        try:
+            # Use the exact source path recorded in the index.
+            removed_count = self.vector_store.remove_source(
+                source_path
+            )
+
+            if removed_count == 0:
+                raise FileNotFoundError(
+                    f"No indexed chunks found for: {filename}"
+                )
+
+            self.vector_store.save(self.storage_path)
+
+        except Exception:
+            self.reload_rag()
+
+            if (
+                backup_path
+                and os.path.isfile(backup_path)
+            ):
+                os.replace(backup_path, pdf_path)
+
+            raise
+
+        if backup_path and os.path.isfile(backup_path):
+            try:
+                os.remove(backup_path)
+            except OSError:
+                pass
+
+        self.reload_rag()
+
+        return removed_count
+
+
+
     def get_chat_service(
         self,
         conversation_id: str | None = None,
