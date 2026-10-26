@@ -85,6 +85,14 @@ def migrate_legacy_storage() -> None:
         DEFAULT_PROJECT_ID,
     )
 
+    project_snapshot = os.path.join(
+        project_storage,
+        "vectorstore.snapshot",
+    )
+
+    if os.path.isfile(project_snapshot):
+        return
+
     project_index = os.path.join(
         project_storage,
         "index.faiss",
