@@ -36,6 +36,8 @@ def create_vector_store(
             dimension=len(vectors[0]),
         )
 
+    store.remove_source(pdf_path)
+
     store.add(vectors, chunks)
     store.save(storage_path)
 

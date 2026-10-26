@@ -594,6 +594,77 @@ def upload_pdf(
     }
 
 
+
+# ==================================================
+# DOCUMENT MANAGEMENT ENDPOINTS
+# ==================================================
+
+@app.get("/documents")
+def list_documents(
+    project_id: str | None = Query(default=None),
+    authenticated_project_id: str = Depends(authenticate_project),
+):
+    runtime = get_authorized_runtime(
+        authenticated_project_id,
+        project_id,
+    )
+
+    if not runtime.config.rag_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="RAG is disabled for this project.",
+        )
+
+    documents = runtime.list_documents()
+
+    return {
+        "project": runtime.config.name,
+        "count": len(documents),
+        "documents": documents,
+    }
+
+
+@app.delete("/documents/{filename}")
+def delete_document(
+    filename: str,
+    project_id: str | None = Query(default=None),
+    authenticated_project_id: str = Depends(authenticate_project),
+):
+    runtime = get_authorized_runtime(
+        authenticated_project_id,
+        project_id,
+    )
+
+    if not runtime.config.rag_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="RAG is disabled for this project.",
+        )
+
+    try:
+        chunks_deleted = runtime.delete_document(filename)
+
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "project": runtime.config.name,
+        "filename": filename,
+        "chunks_deleted": chunks_deleted,
+        "status": "deleted",
+    }
+
+
+
 # ==================================================
 # CHAT / RAG / HYBRID ENDPOINT
 # ==================================================
