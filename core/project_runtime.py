@@ -48,15 +48,11 @@ class ProjectRuntime:
 
         self.reload_rag()
 
+    
     def reload_rag(self) -> None:
-        index_path = os.path.join(
-            self.storage_path,
-            "index.faiss",
-        )
-
         if (
             not self.config.rag_enabled
-            or not os.path.exists(index_path)
+            or not VectorStore.exists(self.storage_path)
         ):
             self.vector_store = None
             self.rag_service = None
@@ -69,6 +65,7 @@ class ProjectRuntime:
         self.rag_service = RAGService(
             self.vector_store,
         )
+
 
     def index_pdf(self, pdf_path: str) -> int:
         if not self.config.rag_enabled:
