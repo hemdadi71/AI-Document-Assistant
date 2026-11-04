@@ -11,7 +11,7 @@
     {
       "name": "chat_only_demo",
       "chat_enabled": true,
-      "rag_enabled": false,
+      "rag_enabled": true,
       "system_prompt": "You are a helpful general-purpose assistant."
     }
   ]

@@ -28,7 +28,7 @@ from core.security import (
     APIKeyConfigurationError,
     resolve_project_for_api_key,
 )
-
+from fastapi.middleware.cors import CORSMiddleware
 
 # ==================================================
 # APPLICATION SETUP
@@ -39,6 +39,20 @@ load_dotenv()
 app = FastAPI(
     title="Reusable AI Assistant Core",
     version="1.0.0",
+)
+import os
+
+origins = os.getenv(
+    "FRONTEND_ORIGINS",
+    "http://localhost:3000"
+).split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in origins],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 STORAGE_PATH = "storage"
