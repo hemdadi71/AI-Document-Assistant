@@ -62,3 +62,8 @@ typing_extensions==4.16.0
 urllib3==2.8.0
 uvicorn==0.54.0
 rank-bm25==0.2.2
+SQLAlchemy==2.1.8
+alembic==1.20.1
+psycopg[binary]==3.3.8
+pwdlib[argon2]
+PyJWT

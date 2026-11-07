@@ -4,7 +4,7 @@
   "projects": [
     {
       "name": "general_assistant",
-      "chat_enabled":false,
+      "chat_enabled":true,
       "rag_enabled": true,
       "system_prompt": "You are a helpful assistant. Answer questions naturally and use the provided documents when appropriate."
     },

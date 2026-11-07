@@ -2,6 +2,9 @@
 import os
 import shutil
 import uuid
+import hmac
+
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -10,25 +13,60 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Depends,
+    Header,
+    Cookie,
+    Request,
+    Response,
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from core.project_config import ProjectConfig
 from core.project_registry import ProjectRegistry
 from core.project_runtime import ProjectRuntime
 from core.project_loader import load_project_settings
 
 from llm import LLMServiceError
 
-from fastapi import Depends, Header
-
 from core.security import (
     APIKeyConfigurationError,
     resolve_project_for_api_key,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+
+from database.session import get_db, get_session_factory
+from database.models import Conversation
+from core.auth_service import (
+    AuthService,
+    UsernameAlreadyExists,
+    InvalidCredentials,
+    InvalidRefreshToken,
+)
+from core.auth_dependencies import (
+    AuthContext,
+    bearer_scheme,
+    get_current_user,
+    resolve_access_token,
+)
+from core.auth_cookies import (
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+    set_auth_cookies,
+    clear_auth_cookies,
+)
+from core.auth_schemas import (
+    RegisterRequest,
+    LoginRequest,
+)
+from core.conversation_service import (
+    ConversationService,
+    ConversationNotFound,
+)
+from core.chat_service import ChatService
 
 # ==================================================
 # APPLICATION SETUP
@@ -40,7 +78,6 @@ app = FastAPI(
     title="Reusable AI Assistant Core",
     version="1.0.0",
 )
-import os
 
 origins = os.getenv(
     "FRONTEND_ORIGINS",
@@ -52,8 +89,54 @@ app.add_middleware(
     allow_origins=[origin.strip() for origin in origins],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-CSRF-Token"],
+    expose_headers=["X-Conversation-ID"],
 )
+
+ALLOWED_FRONTEND_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in origins
+    if origin.strip()
+}
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    """
+    Protect cookie-authenticated state-changing requests against CSRF.
+
+    Browser clients must echo the CSRF token value in X-CSRF-Token.
+    Bearer/API-key integrations without auth cookies remain unchanged.
+    """
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") not in ALLOWED_FRONTEND_ORIGINS:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Request origin is not allowed."},
+            )
+
+        has_auth_cookie = bool(
+            request.cookies.get(ACCESS_COOKIE_NAME)
+            or request.cookies.get(REFRESH_COOKIE_NAME)
+        )
+
+        if has_auth_cookie:
+            csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+            csrf_header = request.headers.get("X-CSRF-Token")
+
+            if (
+                not csrf_cookie
+                or not csrf_header
+                or not hmac.compare_digest(csrf_cookie, csrf_header)
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF validation failed."},
+                )
+
+    return await call_next(request)
+
 
 STORAGE_PATH = "storage"
 PDF_ROOT = "data/projects"
@@ -261,6 +344,82 @@ def authenticate_project(
     return project_id
 
 
+@dataclass
+class RequestPrincipal:
+    project_id: str
+    auth_context: AuthContext | None = None
+
+
+def get_request_principal(
+    x_api_key: str | None = Header(
+        default=None,
+        alias="X-API-Key",
+    ),
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        bearer_scheme
+    ),
+    access_token: str | None = Cookie(
+        default=None,
+        alias=ACCESS_COOKIE_NAME,
+    ),
+) -> RequestPrincipal:
+    """Accept a browser access cookie, a Bearer token, or a legacy API key."""
+
+    # Bearer credentials take precedence for backwards compatibility.
+    token = (
+        credentials.credentials
+        if credentials is not None
+        else access_token
+    )
+
+    # Open a database connection only for user-token authentication.
+    if token is not None:
+        session_factory = get_session_factory()
+        with session_factory() as auth_db:
+            auth_context = resolve_access_token(
+                token,
+                auth_db,
+            )
+
+        return RequestPrincipal(
+            project_id=auth_context.project_id,
+            auth_context=auth_context,
+        )
+
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required.",
+            headers={"WWW-Authenticate": "Bearer or ApiKey"},
+        )
+
+    try:
+        project_id = resolve_project_for_api_key(
+            x_api_key,
+            project_runtimes.keys(),
+        )
+    except APIKeyConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Project API key configuration is invalid.",
+        ) from exc
+
+    if project_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid API key.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    return RequestPrincipal(project_id=project_id)
+
+
+def resolve_auth_project(project_id: str | None) -> str:
+    """Resolve an optional auth project to a configured project ID."""
+
+    return get_runtime(project_id).config.name
+
+
 def get_authorized_runtime(
     authenticated_project_id: str,
     requested_project_id: str | None = None,
@@ -400,6 +559,268 @@ class ChatRequest(BaseModel):
 
 
 # ==================================================
+# AUTHENTICATION ENDPOINTS
+# ==================================================
+
+@app.post("/auth/register", status_code=201)
+def register(
+    request: RegisterRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    # Registration also creates a session, so the browser is logged in
+    # immediately after successful sign-up.
+    project_id = resolve_auth_project(request.project_id)
+
+    try:
+        service = AuthService(db)
+        user = service.register(
+            username=request.username,
+            password=request.password,
+        )
+        tokens = service.login(
+            username=request.username,
+            password=request.password,
+            project_id=project_id,
+        )
+    except UsernameAlreadyExists as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Username is already registered.",
+        ) from exc
+    except InvalidCredentials as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Registration succeeded but automatic sign-in failed.",
+        ) from exc
+
+    csrf_token = set_auth_cookies(response, tokens)
+
+    return {
+        "user": {
+            "id": str(user.id),
+            "username": user.username,
+        },
+        "project_id": project_id,
+        "expires_in": tokens["expires_in"],
+        "csrf_token": csrf_token,
+    }
+
+
+@app.post("/auth/login")
+def login(
+    request: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    project_id = resolve_auth_project(request.project_id)
+
+    try:
+        result = AuthService(db).login(
+            username=request.username,
+            password=request.password,
+            project_id=project_id,
+        )
+    except InvalidCredentials as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password.",
+        ) from exc
+
+    user = result["user"]
+    csrf_token = set_auth_cookies(response, result)
+
+    # Access and refresh tokens are deliberately not returned in JSON.
+    # The CSRF token is safe to expose and is required in a custom header.
+    return {
+        "user": {
+            "id": str(user.id),
+            "username": user.username,
+        },
+        "project_id": project_id,
+        "expires_in": result["expires_in"],
+        "csrf_token": csrf_token,
+    }
+
+
+@app.post("/auth/refresh")
+def refresh_access_token(
+    response: Response,
+    refresh_token: str | None = Cookie(
+        default=None,
+        alias=REFRESH_COOKIE_NAME,
+    ),
+    db: Session = Depends(get_db),
+):
+    if not refresh_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Refresh cookie is missing.",
+        )
+
+    try:
+        result = AuthService(db).refresh(refresh_token)
+    except InvalidRefreshToken as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Refresh token is invalid, expired, or revoked.",
+        ) from exc
+
+    csrf_token = set_auth_cookies(response, result)
+
+    return {
+        "status": "refreshed",
+        "expires_in": result["expires_in"],
+        "csrf_token": csrf_token,
+    }
+
+
+@app.get("/auth/csrf")
+def get_csrf_token(
+    response: Response,
+    csrf_token: str | None = Cookie(
+        default=None,
+        alias=CSRF_COOKIE_NAME,
+    ),
+):
+    if not csrf_token:
+        raise HTTPException(
+            status_code=401,
+            detail="CSRF cookie is missing.",
+        )
+
+    response.headers["Cache-Control"] = "no-store"
+    return {"csrf_token": csrf_token}
+
+
+@app.post("/auth/logout")
+def logout(
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        bearer_scheme
+    ),
+    access_token: str | None = Cookie(
+        default=None,
+        alias=ACCESS_COOKIE_NAME,
+    ),
+    refresh_token: str | None = Cookie(
+        default=None,
+        alias=REFRESH_COOKIE_NAME,
+    ),
+    db: Session = Depends(get_db),
+):
+    # Prefer a valid access token; if it has expired, revoke by refresh token.
+    token = (
+        credentials.credentials
+        if credentials is not None
+        else access_token
+    )
+
+    auth = None
+    if token:
+        try:
+            auth = resolve_access_token(token, db)
+        except HTTPException:
+            auth = None
+
+    service = AuthService(db)
+    if auth is not None:
+        service.logout(auth.session_id)
+    elif refresh_token:
+        service.logout_refresh_token(refresh_token)
+
+    # Always expire browser cookies, even when the access token has expired.
+    clear_auth_cookies(response)
+    return {"status": "logged_out"}
+
+
+@app.get("/auth/me")
+def get_me(
+    auth: AuthContext = Depends(get_current_user),
+):
+    return {
+        "id": str(auth.user.id),
+        "username": auth.user.username,
+        "project_id": auth.project_id,
+    }
+
+
+# ==================================================
+# CONVERSATION HISTORY ENDPOINTS
+# ==================================================
+
+@app.get("/conversations")
+def list_conversations(
+    limit: int = Query(default=50, ge=1, le=100),
+    auth: AuthContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    items = ConversationService(db).list_conversations(
+        user_id=auth.user.id,
+        project_id=auth.project_id,
+        limit=limit,
+    )
+    return {"count": len(items), "conversations": items}
+
+
+@app.get("/conversations/{conversation_id}")
+def get_conversation(
+    conversation_id: str,
+    auth: AuthContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        conversation_uuid = uuid.UUID(conversation_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid conversation ID.",
+        ) from exc
+
+    try:
+        return ConversationService(db).get_conversation(
+            conversation_id=conversation_uuid,
+            user_id=auth.user.id,
+            project_id=auth.project_id,
+        )
+    except ConversationNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found.",
+        ) from exc
+
+
+@app.delete("/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: str,
+    auth: AuthContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        conversation_uuid = uuid.UUID(conversation_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid conversation ID.",
+        ) from exc
+
+    deleted = ConversationService(db).delete_conversation(
+        conversation_id=conversation_uuid,
+        user_id=auth.user.id,
+        project_id=auth.project_id,
+    )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found.",
+        )
+
+    db.commit()
+    return {"status": "deleted", "conversation_id": conversation_id}
+
+
+# ==================================================
 # REQUEST VALIDATION
 # ==================================================
 
@@ -486,10 +907,10 @@ def safe_stream(generator):
 @app.get("/health")
 def health(
     project_id: str | None = Query(default=None),
-    authenticated_project_id: str = Depends(authenticate_project),
+    principal: RequestPrincipal = Depends(get_request_principal),
 ):
     runtime = get_authorized_runtime(
-        authenticated_project_id,
+        principal.project_id,
         project_id,
     )
 
@@ -523,9 +944,9 @@ def upload_pdf(
     project_id: str | None = Query(
         default=None,
     ),
-    authenticated_project_id: str = Depends(authenticate_project)
+    principal: RequestPrincipal = Depends(get_request_principal),
 ):
-    runtime = get_authorized_runtime(authenticated_project_id, project_id)
+    runtime = get_authorized_runtime(principal.project_id, project_id)
 
     if not runtime.config.rag_enabled:
         raise HTTPException(
@@ -624,10 +1045,10 @@ def upload_pdf(
 @app.get("/documents")
 def list_documents(
     project_id: str | None = Query(default=None),
-    authenticated_project_id: str = Depends(authenticate_project),
+    principal: RequestPrincipal = Depends(get_request_principal),
 ):
     runtime = get_authorized_runtime(
-        authenticated_project_id,
+        principal.project_id,
         project_id,
     )
 
@@ -650,10 +1071,10 @@ def list_documents(
 def delete_document(
     filename: str,
     project_id: str | None = Query(default=None),
-    authenticated_project_id: str = Depends(authenticate_project),
+    principal: RequestPrincipal = Depends(get_request_principal),
 ):
     runtime = get_authorized_runtime(
-        authenticated_project_id,
+        principal.project_id,
         project_id,
     )
 
@@ -692,15 +1113,17 @@ def delete_document(
 # ==================================================
 
 @app.post("/chat")
-def chat(request: ChatRequest,authenticated_project_id: str = Depends(authenticate_project)):
+def chat(
+    request: ChatRequest,
+    principal: RequestPrincipal = Depends(get_request_principal),
+):
     runtime = get_authorized_runtime(
-    authenticated_project_id,
-    request.project_id,
+        principal.project_id,
+        request.project_id,
     )
     config = runtime.config
     mode = request.mode
 
-    # Validate feature permissions.
     if mode == "chat" and not config.chat_enabled:
         raise HTTPException(
             status_code=403,
@@ -714,8 +1137,7 @@ def chat(request: ChatRequest,authenticated_project_id: str = Depends(authentica
         )
 
     if mode == "hybrid" and not (
-        config.chat_enabled
-        and config.rag_enabled
+        config.chat_enabled and config.rag_enabled
     ):
         raise HTTPException(
             status_code=403,
@@ -725,25 +1147,78 @@ def chat(request: ChatRequest,authenticated_project_id: str = Depends(authentica
             ),
         )
 
-    if (
-        mode in {"rag", "hybrid"}
-        and runtime.rag_service is None
-    ):
+    if mode in {"rag", "hybrid"} and runtime.rag_service is None:
         raise HTTPException(
             status_code=409,
             detail="No documents uploaded yet.",
         )
 
     try:
-        result = runtime.ask(
-            request.question,
-            mode=mode,
-            conversation_id=request.conversation_id,
-        )
+        # JWT-authenticated requests use durable PostgreSQL history.
+        if principal.auth_context is not None:
+            auth = principal.auth_context
+            session_factory = get_session_factory()
+
+            with session_factory() as db:
+                conversations = ConversationService(db)
+                conversation = conversations.get_or_create(
+                    user_id=auth.user.id,
+                    project_id=auth.project_id,
+                    mode=mode,
+                    question=request.question,
+                    conversation_id=request.conversation_id,
+                )
+                history = conversations.get_history(conversation.id)
+
+                chat_service = None
+                if mode in {"chat", "hybrid"}:
+                    chat_service = ChatService(
+                        system_prompt=runtime.system_prompt,
+                        history=history,
+                    )
+
+                result = runtime.ask(
+                    request.question,
+                    mode=mode,
+                    conversation_id=str(conversation.id),
+                    chat_service=chat_service,
+                    history=history,
+                )
+
+                conversations.save_turn(
+                    conversation=conversation,
+                    question=request.question,
+                    answer=result["answer"],
+                    mode=mode,
+                    sources=result.get("sources", []),
+                )
+                db.commit()
+                result["conversation_id"] = str(conversation.id)
+
+        else:
+            # Preserve the existing API-key workflow for integrations.
+            result = runtime.ask(
+                request.question,
+                mode=mode,
+                conversation_id=request.conversation_id,
+            )
 
         result["project_id"] = config.name
-
         return result
+
+    except ConversationNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found.",
+        ) from exc
+
+    except ValueError as exc:
+        if "conversation id" in str(exc).lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid conversation ID.",
+            ) from exc
+        raise
 
     except LLMServiceError as exc:
         raise to_http_exception(exc) from exc
@@ -756,20 +1231,17 @@ def chat(request: ChatRequest,authenticated_project_id: str = Depends(authentica
 @app.post("/chat-stream")
 def chat_stream(
     request: ChatRequest,
-    authenticated_project_id: str = Depends(authenticate_project)
-):  
+    principal: RequestPrincipal = Depends(get_request_principal),
+):
     runtime = get_authorized_runtime(
-    authenticated_project_id,
-    request.project_id,
+        principal.project_id,
+        request.project_id,
     )
 
     if request.mode != "rag":
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Streaming currently supports "
-                "RAG mode only."
-            ),
+            detail="Streaming currently supports RAG mode only.",
         )
 
     if not runtime.config.rag_enabled:
@@ -785,14 +1257,87 @@ def chat_stream(
         )
 
     try:
+        if principal.auth_context is None:
+            # Keep legacy API-key streaming unchanged.
+            generator = runtime.stream_answer(request.question)
+            return StreamingResponse(
+                safe_stream(generator),
+                media_type="text/plain",
+            )
+
+        auth = principal.auth_context
+        session_factory = get_session_factory()
+        with session_factory() as db:
+            conversations = ConversationService(db)
+            conversation = conversations.get_or_create(
+                user_id=auth.user.id,
+                project_id=auth.project_id,
+                mode="rag",
+                question=request.question,
+                conversation_id=request.conversation_id,
+            )
+            history = conversations.get_history(conversation.id)
+            conversation_id = conversation.id
+            db.commit()
+
         generator = runtime.stream_answer(
             request.question,
+            history=history,
         )
 
+    except ConversationNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found.",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid conversation ID.",
+        ) from exc
     except LLMServiceError as exc:
         raise to_http_exception(exc) from exc
 
+    def persisted_stream():
+        answer_parts = []
+        completed = True
+
+        try:
+            for chunk in safe_stream(generator):
+                if "[LLM_ERROR:" in chunk:
+                    completed = False
+                else:
+                    answer_parts.append(chunk)
+                yield chunk
+        except GeneratorExit:
+            completed = False
+            raise
+        except Exception:
+            completed = False
+            raise
+        finally:
+            if completed:
+                # Use a fresh session because the HTTP response may outlive
+                # the request-scoped dependency session.
+                session_factory = get_session_factory()
+                with session_factory() as stream_db:
+                    stored_conversation = stream_db.get(
+                        Conversation,
+                        conversation_id,
+                    )
+                    if stored_conversation is not None:
+                        ConversationService(stream_db).save_turn(
+                            conversation=stored_conversation,
+                            question=request.question,
+                            answer="".join(answer_parts),
+                            mode="rag",
+                            sources=[],
+                        )
+                        stream_db.commit()
+
     return StreamingResponse(
-        safe_stream(generator),
+        persisted_stream(),
         media_type="text/plain",
+        headers={"X-Conversation-ID": str(conversation_id)},
     )
+

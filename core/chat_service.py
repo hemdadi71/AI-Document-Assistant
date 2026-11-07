@@ -4,9 +4,21 @@ from llm import get_ai_response
 
 class ChatService:
 
-    def __init__(self, system_prompt: str | None = None):
-        self.system_prompt = system_prompt
-        self._history: list[dict[str, str]] = []
+    def __init__(
+    self,
+    system_prompt: str | None = None,
+    history: list[dict[str, str]] | None = None,
+    ):
+     self.system_prompt = system_prompt
+
+     self._history = [
+        {
+            "role": message["role"],
+            "content": message["content"],
+        }
+        for message in (history or [])
+        if message.get("role") in {"user", "assistant"}
+    ]
 
     @property
     def history(self) -> list[dict[str, str]]:

@@ -70,7 +70,11 @@ class RAGService:
     def retrieve_contexts(self, question: str):
         return self._retrieve_contexts(question)
 
-    def ask(self, question: str):
+    def ask(
+        self,
+        question: str,
+        history: list[dict[str, str]] | None = None,
+    ):
 
         contexts = self._retrieve_contexts(question)
 
@@ -80,7 +84,10 @@ class RAGService:
                 "sources": [],
             }
 
-        prompt = build_rag_prompt(question, contexts)
+        if history:
+            prompt = build_rag_prompt(question, contexts, history)
+        else:
+            prompt = build_rag_prompt(question, contexts)
 
         answer = get_ai_response([
             {"role": "user", "content": prompt}
@@ -104,14 +111,21 @@ class RAGService:
             ],
         }
 
-    def stream_answer(self, question: str):
+    def stream_answer(
+        self,
+        question: str,
+        history: list[dict[str, str]] | None = None,
+    ):
 
         contexts = self._retrieve_contexts(question)
 
         if not contexts:
             return iter(["I don't know."])
 
-        prompt = build_rag_prompt(question, contexts)
+        if history:
+            prompt = build_rag_prompt(question, contexts, history)
+        else:
+            prompt = build_rag_prompt(question, contexts)
 
         return stream_ai_response([
             {"role": "user", "content": prompt}

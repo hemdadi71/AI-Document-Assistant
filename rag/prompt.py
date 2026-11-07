@@ -1,5 +1,5 @@
 
-def build_rag_prompt(question, contexts):
+def build_rag_prompt(question, contexts, history=None):
 
     context_blocks = []
 
@@ -19,10 +19,22 @@ Chunk ID: {document.get("chunk_id", "Unknown")}
 
     context_text = "\n\n".join(context_blocks)
 
+    history_blocks = []
+    for message in (history or [])[-12:]:
+        role = message.get("role")
+        content = message.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            history_blocks.append(f"{role.title()}: {content}")
+
+    history_text = "\n".join(history_blocks) or "No previous conversation."
+
     prompt = f"""
 You are a precise question-answering assistant.
 
-Answer the user's question using only the provided context.
+Answer the user's current question using only the provided document context.
+Use the previous conversation only to resolve references and understand follow-up
+questions. Previous assistant messages are not evidence and must not override the
+provided document context.
 
 Instructions:
 1. Answer the exact question being asked.
@@ -39,11 +51,15 @@ Instructions:
    respond exactly with: I don't know.
 8. Keep the answer concise.
 
+Previous conversation (for reference resolution only):
+
+{history_text}
+
 Context:
 
 {context_text}
 
-Question:
+Current question:
 {question}
 
 Answer:

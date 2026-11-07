@@ -235,11 +235,13 @@ class ProjectRuntime:
         return session_id, self.chat_sessions[session_id]
 
     def ask(
-        self,
-        question: str,
-        *,
-        mode: RequestMode,
-        conversation_id: str | None = None,
+    self,
+    question: str,
+    *,
+    mode: RequestMode,
+    conversation_id: str | None = None,
+    chat_service: ChatService | None = None,
+    history: list[dict[str, str]] | None = None,
     ) -> dict:
         question = question.strip()
 
@@ -255,9 +257,12 @@ class ProjectRuntime:
                     "Chat is disabled for this project."
                 )
 
-            session_id, chat_service = self.get_chat_service(
-                conversation_id,
-            )
+            if chat_service is None:
+                session_id, chat_service = self.get_chat_service(
+                    conversation_id,
+                )
+            else:
+                session_id = conversation_id or uuid.uuid4().hex
 
             result = {
                 "answer": chat_service.chat(question),
@@ -275,8 +280,14 @@ class ProjectRuntime:
                     "No documents are indexed for this project."
                 )
 
-            result = self.rag_service.ask(question)
-            session_id = None
+            if history:
+                result = self.rag_service.ask(
+                    question,
+                    history=history,
+                )
+            else:
+                result = self.rag_service.ask(question)
+            session_id = conversation_id
 
         else:
             if not (
@@ -292,9 +303,12 @@ class ProjectRuntime:
                     "No documents are indexed for this project."
                 )
 
-            session_id, chat_service = self.get_chat_service(
-                conversation_id,
-            )
+            if chat_service is None:
+                session_id, chat_service = self.get_chat_service(
+                    conversation_id,
+                )
+            else:
+                session_id = conversation_id or uuid.uuid4().hex
 
             assistant = AssistantService(
                 config=self.config,
@@ -312,7 +326,11 @@ class ProjectRuntime:
 
         return result
 
-    def stream_answer(self, question: str):
+    def stream_answer(
+        self,
+        question: str,
+        history: list[dict[str, str]] | None = None,
+    ):
         if not self.config.rag_enabled:
             raise ValueError(
                 "RAG is disabled for this project."
@@ -321,6 +339,12 @@ class ProjectRuntime:
         if self.rag_service is None:
             raise RuntimeError(
                 "No documents are indexed for this project."
+            )
+
+        if history:
+            return self.rag_service.stream_answer(
+                question,
+                history=history,
             )
 
         return self.rag_service.stream_answer(question)

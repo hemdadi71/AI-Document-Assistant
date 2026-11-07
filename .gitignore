@@ -32,3 +32,9 @@ data/
 # Model cache
 .cache/
 huggingface/
+# Local Docker database credentials
+.env.docker
+
+# Allow example environment files in Git
+!.env.example
+!.env.docker.example
